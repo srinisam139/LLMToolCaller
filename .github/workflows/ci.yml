@@ -1,0 +1,123 @@
+name: CI
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  test:
+    name: Test
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        swift-version: [5.9, 5.10]
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Setup Swift
+      uses: swift-actions/setup-swift@v1
+      with:
+        swift-version: ${{ matrix.swift-version }}
+    
+    - name: Build
+      run: swift build
+    
+    - name: Run tests
+      run: swift test --enable-code-coverage
+    
+    - name: Generate coverage report
+      if: matrix.os == 'ubuntu-latest' && matrix.swift-version == '5.9'
+      run: |
+        swift test --enable-code-coverage
+        xcrun llvm-cov export -format="lcov" .build/debug/LLMToolCallerPackageTests.xctest/Contents/MacOS/LLMToolCallerPackageTests -instr-profile .build/debug/codecov/default.profdata > coverage.lcov || true
+    
+    - name: Upload coverage to Codecov
+      if: matrix.os == 'ubuntu-latest' && matrix.swift-version == '5.9'
+      uses: codecov/codecov-action@v3
+      with:
+        file: coverage.lcov
+        fail_ci_if_error: false
+
+  example:
+    name: Test Example
+    runs-on: macos-latest
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Setup Swift
+      uses: swift-actions/setup-swift@v1
+      with:
+        swift-version: 5.9
+    
+    - name: Build Example
+      run: swift build --product LLMToolCallerExample
+    
+    - name: Test Example Commands
+      run: |
+        swift run LLMToolCallerExample list
+        swift run LLMToolCallerExample call calculator --parameters '{"operation": "add", "operands": [1, 2, 3]}'
+
+  lint:
+    name: Swift Lint
+    runs-on: ubuntu-latest
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Setup Swift
+      uses: swift-actions/setup-swift@v1
+      with:
+        swift-version: 5.9
+    
+    - name: Lint
+      run: |
+        # Basic format checking
+        swift package clean
+        swift build
+        
+        # Check for warnings
+        swift build 2>&1 | tee build.log
+        if grep -q "warning:" build.log; then
+          echo "⚠️ Build warnings found:"
+          grep "warning:" build.log
+          exit 1
+        fi
+        
+        echo "✅ No build warnings found"
+
+  compatibility:
+    name: Platform Compatibility
+    runs-on: macos-latest
+    strategy:
+      matrix:
+        platform: [iOS, macOS, tvOS, watchOS]
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Setup Xcode
+      uses: maxim-lobanov/setup-xcode@v1
+      with:
+        xcode-version: latest-stable
+    
+    - name: Test ${{ matrix.platform }} Compatibility
+      run: |
+        case "${{ matrix.platform }}" in
+          iOS)
+            xcodebuild -scheme LLMToolCaller -destination 'platform=iOS Simulator,name=iPhone 15' build
+            ;;
+          macOS)
+            xcodebuild -scheme LLMToolCaller -destination 'platform=macOS' build
+            ;;
+          tvOS)
+            xcodebuild -scheme LLMToolCaller -destination 'platform=tvOS Simulator,name=Apple TV' build
+            ;;
+          watchOS)
+            xcodebuild -scheme LLMToolCaller -destination 'platform=watchOS Simulator,name=Apple Watch Series 9 (45mm)' build
+            ;;
+        esac
